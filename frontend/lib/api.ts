@@ -30,20 +30,18 @@ api.interceptors.response.use(
 export default api;
 
 // Auth
+interface AuthResponse {
+  access_token: string;
+  user: any;
+}
+
 export const authApi = {
   register: (data: { email: string; full_name: string; password: string; faculty: string }) =>
-    api.post("/api/auth/register", data),
+    api.post<AuthResponse>("/api/auth/register", data),
   login: (data: { email: string; password: string }) =>
-    api.post("/api/auth/login", data),
+    api.post<AuthResponse>("/api/auth/login", data),
   me: () => api.get("/api/auth/me"),
-    register: (data: { email: string; full_name: string; password: string; faculty: string }) =>
-    api.post("/api/auth/register", data),
-  login: (data: { email: string; password: string }) =>
-    api.post("/api/auth/login", data),
-  me: () => api.get("/api/auth/me"),
-  // ── NUOVO ──
   logout: () => api.post("/api/auth/logout"),
-  
 };
 
 
