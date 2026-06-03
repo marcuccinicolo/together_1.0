@@ -1,15 +1,16 @@
 'use client';
+
 import { ChatMessage } from '@/hooks/useEventChat';
 import { countryCodeToFlag } from '@/lib/countries';
 import { getInitials } from '@/lib/utils';
 
 interface Props {
-  msg:         ChatMessage;
-  isOwn:       boolean;
-  showAvatar:  boolean;
-  isFirst:     boolean; // primo del gruppo (mostra nome)
-  isLast:      boolean; // ultimo del gruppo (mostra timestamp + avatar)
-  isConsecutive: boolean; // stesso mittente del precedente
+  msg:      ChatMessage;
+  isOwn:    boolean;
+  isFirst:  boolean; // primo della sequenza (stesso utente)
+  isLast:   boolean; // ultimo della sequenza
+  showTime: boolean; // mostra timestamp (solo sull'ultimo)
+  animate:  boolean; // fade-up solo su messaggi nuovi
 }
 
 function formatTime(iso: string) {
@@ -18,132 +19,174 @@ function formatTime(iso: string) {
   });
 }
 
-// Border radius per bubble raggruppate stile iMessage/Telegram
+// Calcola border-radius per effetto "coda" stile iMessage
 function getBubbleRadius(isOwn: boolean, isFirst: boolean, isLast: boolean): string {
-  const R = '20px';
-  const r = '5px';
+  const full  = '20px';
+  const tight = '5px';
 
-  if (isOwn) {
-    // Lato destro: angolo bottom-right si arrotonda solo sull'ultimo
-    if (isFirst && isLast) return `${R} ${R} ${r} ${R}`;
-    if (isFirst)            return `${R} ${R} ${r} ${R}`;
-    if (isLast)             return `${R} ${R} ${r} ${R}`;
-    return                         `${R} ${r} ${r} ${R}`;
-  } else {
-    // Lato sinistro: angolo bottom-left si arrotonda solo sull'ultimo
-    if (isFirst && isLast) return `${R} ${R} ${R} ${r}`;
-    if (isFirst)            return `${R} ${R} ${r} ${r}`;
-    if (isLast)             return `${r} ${R} ${R} ${r}`;
-    return                         `${r} ${R} ${R} ${r}`;
+  if (isFirst && isLast) {
+    // Messaggio singolo — fully rounded con coda
+    return isOwn
+      ? `${full} ${full} ${tight} ${full}`
+      : `${full} ${full} ${full} ${tight}`;
   }
+  if (isFirst) {
+    // Top della sequenza
+    return isOwn
+      ? `${full} ${full} ${tight} ${full}`
+      : `${full} ${full} ${full} ${tight}`;
+  }
+  if (isLast) {
+    // Bottom della sequenza — coda qui
+    return isOwn
+      ? `${full} ${tight} ${tight} ${full}`
+      : `${tight} ${full} ${full} ${tight}`;
+  }
+  // Metà sequenza — angoli stretti sul lato della coda
+  return isOwn
+    ? `${full} ${tight} ${tight} ${full}`
+    : `${tight} ${full} ${full} ${tight}`;
 }
 
-export function ChatBubble({ msg, isOwn, showAvatar, isFirst, isLast, isConsecutive }: Props) {
-  const flag = msg.user.country_code ? countryCodeToFlag(msg.user.country_code) : null;
-  const initials = getInitials(msg.user.full_name);
-  const radius = getBubbleRadius(isOwn, isFirst, isLast);
+const AVATAR_SIZE = 36;
 
-  // Gap tra messaggi: ridotto se consecutivi, normale altrimenti
-  const marginBottom = isLast ? 6 : 2;
+export function ChatBubble({ msg, isOwn, isFirst, isLast, showTime, animate }: Props) {
+  const flag     = msg.user.country_code ? countryCodeToFlag(msg.user.country_code) : null;
+  const initials = getInitials(msg.user.full_name);
+  const radius   = getBubbleRadius(isOwn, isFirst, isLast);
+
+  // Margine verticale: più spazio tra sequenze diverse, compatto dentro
+  const marginBottom = isLast ? 8 : 2;
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: isOwn ? 'row-reverse' : 'row',
-      alignItems: 'flex-end',
-      gap: 8,
-      marginBottom,
-      paddingLeft: isOwn ? 48 : 0,
-      paddingRight: isOwn ? 0 : 48,
-    }}>
-
-      {/* Avatar — occupa spazio fisso, visibile solo sull'ultimo del gruppo */}
-      <div style={{ width: 34, flexShrink: 0, alignSelf: 'flex-end' }}>
-        {!isOwn && (
+    <div
+      style={{
+        display:       'flex',
+        flexDirection: isOwn ? 'row-reverse' : 'row',
+        alignItems:    'flex-end',
+        gap:           8,
+        marginBottom,
+        // Padding laterale asimmetrico per creare prospettiva
+        paddingLeft:  isOwn ? 52 : 0,
+        paddingRight: isOwn ? 0  : 52,
+        // Animazione entrata
+        animation: animate ? 'bubbleIn 0.25s cubic-bezier(0.34,1.56,0.64,1) both' : 'none',
+      }}
+    >
+      {/* ── Avatar (solo messaggi altrui) ─────────────────────── */}
+      <div style={{
+        width:     AVATAR_SIZE,
+        flexShrink: 0,
+        alignSelf: 'flex-end',
+      }}>
+        {!isOwn ? (
+          // Mostra avatar sull'ultimo della sequenza, placeholder trasparente sugli altri
           isLast ? (
             <div style={{
-              width: 34, height: 34,
-              borderRadius: 12,
-              background: msg.user.avatar_color || '#7C5CFC',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 12, color: '#fff', fontWeight: 800,
-              overflow: 'hidden',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
-              flexShrink: 0,
+              width:          AVATAR_SIZE,
+              height:         AVATAR_SIZE,
+              borderRadius:   13,
+              overflow:       'hidden',
+              background:     msg.user.avatar_color || '#7C5CFC',
+              display:        'flex',
+              alignItems:     'center',
+              justifyContent: 'center',
+              fontSize:       13,
+              fontWeight:     800,
+              color:          '#fff',
+              letterSpacing:  '-0.02em',
+              boxShadow:      '0 2px 10px rgba(0,0,0,0.3)',
+              flexShrink:     0,
             }}>
               {msg.user.avatar_url
-                ? <img src={msg.user.avatar_url} alt={initials}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ? <img
+                    src={msg.user.avatar_url}
+                    alt={msg.user.full_name}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
                 : initials
               }
             </div>
           ) : (
-            // Segnaposto invisibile per allineare le bolle
-            <div style={{ width: 34 }} />
+            // Placeholder — mantiene l'allineamento delle bubble
+            <div style={{ width: AVATAR_SIZE, height: AVATAR_SIZE }} />
           )
-        )}
+        ) : null}
       </div>
 
-      {/* Colonna bubble */}
+      {/* ── Colonna contenuto ─────────────────────────────────── */}
       <div style={{
-        display: 'flex',
+        display:    'flex',
         flexDirection: 'column',
         alignItems: isOwn ? 'flex-end' : 'flex-start',
-        gap: 1,
-        maxWidth: '100%',
+        gap:        2,
+        maxWidth:   '100%',
+        minWidth:   0,
       }}>
-
-        {/* Nome mittente — solo primo del gruppo, solo altri */}
+        {/* Nome + bandiera — solo primo messaggio di altri */}
         {!isOwn && isFirst && (
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 5,
-            paddingLeft: 14, marginBottom: 2,
+            display:     'flex',
+            alignItems:  'center',
+            gap:         5,
+            paddingLeft: 14,
+            marginBottom: 2,
           }}>
             <span style={{
-              fontSize: 12, fontWeight: 700,
-              color: msg.user.avatar_color || 'var(--text-secondary)',
+              fontSize:      12,
+              fontWeight:    700,
+              color:         'var(--text-secondary)',
               letterSpacing: '0.01em',
             }}>
               {msg.user.full_name.split(' ')[0]}
             </span>
-            {flag && <span style={{ fontSize: 13 }}>{flag}</span>}
+            {flag && <span style={{ fontSize: 13, lineHeight: 1 }}>{flag}</span>}
           </div>
         )}
 
-        {/* Bubble */}
+        {/* ── Bolla testo ─────────────────────────────────────── */}
         <div style={{
-          padding: isOwn ? '10px 16px' : '10px 15px',
+          padding:      '10px 14px',
           borderRadius: radius,
-          background: isOwn
-            ? 'linear-gradient(135deg, #7C5CFC 0%, #9B6FFF 50%, #FF5E7D 100%)'
+          background:   isOwn
+            ? 'linear-gradient(135deg, #7C5CFC 0%, #9B6DFF 60%, #FF5E7D 100%)'
             : 'var(--bg-elevated)',
-          border: isOwn ? 'none' : '1px solid var(--border-subtle)',
-          color: isOwn ? '#fff' : 'var(--text-primary)',
-          fontSize: 15,
-          lineHeight: 1.45,
-          wordBreak: 'break-word',
-          letterSpacing: '-0.01em',
-          // Ombra leggera sulle bubble proprie
-          boxShadow: isOwn
-            ? '0 4px 16px rgba(124,92,252,0.35)'
-            : '0 1px 4px rgba(0,0,0,0.12)',
+          border:       isOwn ? 'none' : '1px solid var(--border-subtle)',
+          color:        isOwn ? '#fff' : 'var(--text-primary)',
+          fontSize:     15,
+          lineHeight:   1.5,
+          wordBreak:    'break-word',
+          whiteSpace:   'pre-wrap',
+          boxShadow:    isOwn
+            ? '0 4px 16px rgba(124,92,252,0.3)'
+            : '0 1px 4px rgba(0,0,0,0.15)',
+          // Transizione colore per hover futuro
+          transition: 'opacity 0.15s ease',
         }}>
           {msg.text}
         </div>
 
-        {/* Timestamp — solo ultimo del gruppo */}
-        {isLast && (
+        {/* ── Timestamp — solo sull'ultimo della sequenza ─────── */}
+        {showTime && (
           <span style={{
-            fontSize: 10.5,
-            color: 'var(--text-muted)',
-            paddingLeft: isOwn ? 0 : 14,
-            paddingRight: isOwn ? 2 : 0,
-            marginTop: 2,
+            fontSize:    11,
+            color:       'var(--text-muted)',
+            paddingLeft:  isOwn ? 0   : 14,
+            paddingRight: isOwn ? 14  : 0,
+            marginTop:    2,
+            letterSpacing: '0.02em',
           }}>
             {formatTime(msg.created_at)}
           </span>
         )}
       </div>
+
+      <style>{`
+        @keyframes bubbleIn {
+          from { opacity: 0; transform: translateY(8px) scale(0.96); }
+          to   { opacity: 1; transform: translateY(0)  scale(1);    }
+        }
+      `}</style>
     </div>
   );
 }

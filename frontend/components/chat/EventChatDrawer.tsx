@@ -1,8 +1,11 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useEventChat } from '@/hooks/useEventChat';
-import { ChatBubble } from './ChatBubble';
 import { useAuthStore } from '@/lib/store';
+import { ChatBubble }       from './ChatBubble';
+import { ChatDateSeparator } from './ChatDateSeparator';
+import { ChatInput }         from './ChatInput';
 
 interface Props {
   eventId:    number;
@@ -12,233 +15,224 @@ interface Props {
 }
 
 export function EventChatDrawer({ eventId, eventTitle, isOpen, onClose }: Props) {
-  const { user } = useAuthStore();
+  const { user }  = useAuthStore();
   const { messages, error, sending, sendMessage } = useEventChat(eventId);
-  const [input,    setInput]    = useState('');
-  const [sendErr,  setSendErr]  = useState(false);
-  const [visible,  setVisible]  = useState(false);
-  const bottomRef  = useRef<HTMLDivElement>(null);
-  const inputRef   = useRef<HTMLTextAreaElement>(null);
-  const listRef    = useRef<HTMLDivElement>(null);
 
-  // Animazione mount/unmount
+  const [visible, setVisible] = useState(false);   // controlla il mount
+  const [ready,   setReady]   = useState(false);   // controlla la slide-in animation
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const bottomRef   = useRef<HTMLDivElement>(null);
+
+  // Traccia quanti messaggi c'erano all'apertura — per animare solo i nuovi
+  const openCountRef = useRef(0);
+
+  /* ── Mount / unmount con animazione ───────────────────────── */
   useEffect(() => {
     if (isOpen) {
-      // Piccolo delay per permettere al DOM di montare prima della transizione
-      requestAnimationFrame(() => requestAnimationFrame(() => setVisible(true)));
+      setVisible(true);
+      openCountRef.current = messages.length;
+      // Micro-delay per permettere il paint prima della transizione
+      requestAnimationFrame(() => requestAnimationFrame(() => setReady(true)));
     } else {
-      setVisible(false);
+      setReady(false);
+      // Aspetta la slide-out prima di smontare
+      const t = setTimeout(() => setVisible(false), 320);
+      return () => clearTimeout(t);
     }
   }, [isOpen]);
 
-  // Scroll automatico solo se l'utente è già in fondo
+  /* ── Blocca scroll body senza layout jump ──────────────────── */
   useEffect(() => {
-    const el = listRef.current;
-    if (!el) return;
-    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-    if (isAtBottom || messages.length <= 1) {
+    if (!isOpen) return;
+
+    // Salva la posizione corrente e blocca con overflow:hidden
+    const scrollY = window.scrollY;
+    document.documentElement.style.overflow = 'hidden';
+
+    return () => {
+      document.documentElement.style.overflow = '';
+      window.scrollTo(0, scrollY);
+    };
+  }, [isOpen]);
+
+  /* ── Scroll automatico ai nuovi messaggi ──────────────────── */
+  useEffect(() => {
+    if (!messagesRef.current || !isOpen) return;
+    const el = messagesRef.current;
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+    if (isNearBottom) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages]);
+  }, [messages, isOpen]);
 
-  // Blocca scroll body quando aperto
-  useEffect(() => {
-    document.body.style.overflow = isOpen ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [isOpen]);
+  /* ── Arricchisce ogni messaggio con grouping metadata ──────── */
+  const enriched = useMemo(() => {
+    return messages.map((msg, i) => {
+      const prev = messages[i - 1];
+      const next = messages[i + 1];
 
-  // Focus input all'apertura
-  useEffect(() => {
-    if (isOpen && visible) {
-      setTimeout(() => inputRef.current?.focus(), 350);
-    }
-  }, [isOpen, visible]);
+      const sameAsPrev = prev && prev.user.id === msg.user.id
+        && isSameMinuteGroup(prev.created_at, msg.created_at);
+      const sameAsNext = next && next.user.id === msg.user.id
+        && isSameMinuteGroup(msg.created_at, next.created_at);
 
-  // Auto-resize textarea
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-    e.target.style.height = 'auto';
-    e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
-  };
+      const isFirst = !sameAsPrev;
+      const isLast  = !sameAsNext;
 
-  const handleSend = async () => {
-    const text = input.trim();
-    if (!text || sending) return;
-    setInput('');
-    setSendErr(false);
-    // Reset textarea height
-    if (inputRef.current) inputRef.current.style.height = 'auto';
-    try {
-      await sendMessage(text);
-    } catch {
-      setInput(text);
-      setSendErr(true);
-    }
-  };
+      const showDate = !prev
+        || !isSameDay(prev.created_at, msg.created_at);
 
-  // Calcola proprietà di raggruppamento per ogni messaggio
-  function getMsgProps(i: number) {
-    const msg  = messages[i];
-    const prev = messages[i - 1];
-    const next = messages[i + 1];
+      const isOwn     = msg.user.id === user?.id;
+      // Anima solo i messaggi arrivati dopo l'apertura del drawer
+      const isNew     = i >= openCountRef.current;
 
-    const samePrev = prev && prev.user.id === msg.user.id &&
-      new Date(msg.created_at).getTime() - new Date(prev.created_at).getTime() < 5 * 60 * 1000;
-    const sameNext = next && next.user.id === msg.user.id &&
-      new Date(next.created_at).getTime() - new Date(msg.created_at).getTime() < 5 * 60 * 1000;
+      return { msg, isFirst, isLast, showTime: isLast, showDate, isOwn, isNew };
+    });
+  }, [messages, user?.id]);
 
-    return {
-      isFirst:       !samePrev,
-      isLast:        !sameNext,
-      isConsecutive: !!samePrev,
-      showAvatar:    !samePrev,
-    };
-  }
-
-  if (!isOpen) return null;
+  if (!visible) return null;
 
   return (
     <>
-      {/* Backdrop */}
+      {/* ── Backdrop ──────────────────────────────────────────── */}
       <div
         onClick={onClose}
         style={{
-          position: 'fixed', inset: 0,
-          background: 'rgba(0,0,0,0.6)',
+          position:  'fixed',
+          inset:     0,
+          background:'rgba(0,0,0,0.55)',
           backdropFilter: 'blur(6px)',
           WebkitBackdropFilter: 'blur(6px)',
-          zIndex: 49,
-          opacity: visible ? 1 : 0,
-          transition: 'opacity 0.3s ease',
+          zIndex:    49,
+          opacity:   ready ? 1 : 0,
+          transition:'opacity 0.28s ease',
         }}
       />
 
-      {/* Drawer — quasi fullscreen su mobile */}
+      {/* ── Drawer fullscreen ─────────────────────────────────── */}
       <div style={{
-        position: 'fixed',
-        left: 0, right: 0, bottom: 0,
-        // Su mobile: parte dall'8% per lasciare solo un piccolo hint che c'è qualcosa sotto
-        top: '6%',
-        zIndex: 50,
-        background: 'var(--bg-base)',
-        borderRadius: '24px 24px 0 0',
-        display: 'flex',
+        position:      'fixed',
+        inset:         0,
+        zIndex:        50,
+        display:       'flex',
         flexDirection: 'column',
-        overflow: 'hidden',
-        // Safe area per notch/home indicator
+        background:    'var(--bg-base)',
+        // Slide-up animation
+        transform:     ready ? 'translateY(0)' : 'translateY(100%)',
+        transition:    'transform 0.32s cubic-bezier(0.32,0.72,0,1)',
+        // Safe areas
+        paddingTop:    'env(safe-area-inset-top)',
         paddingBottom: 'env(safe-area-inset-bottom)',
-        // Animazione slide-up
-        transform: visible ? 'translateY(0)' : 'translateY(100%)',
-        transition: 'transform 0.4s cubic-bezier(0.32, 0.72, 0, 1)',
-        // Ombra profonda sopra
-        boxShadow: '0 -8px 40px rgba(0,0,0,0.4)',
       }}>
 
-        {/* Handle pill */}
+        {/* ── Header ────────────────────────────────────────── */}
         <div style={{
-          width: 40, height: 4, borderRadius: 2,
-          background: 'rgba(255,255,255,0.15)',
-          margin: '12px auto 0',
-          flexShrink: 0,
-        }} />
-
-        {/* Header */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          padding: '14px 16px 14px',
-          borderBottom: '1px solid var(--border-subtle)',
-          flexShrink: 0,
+          display:        'flex',
+          alignItems:     'center',
+          gap:            12,
+          padding:        '14px 16px',
+          borderBottom:   '1px solid var(--border-subtle)',
+          flexShrink:     0,
+          background:     'var(--bg-base)',
         }}>
-          {/* Icona evento */}
-          <div style={{
-            width: 42, height: 42,
-            borderRadius: 14,
-            background: 'linear-gradient(135deg, rgba(124,92,252,0.18), rgba(255,94,125,0.18))',
-            border: '1px solid rgba(124,92,252,0.25)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 20, flexShrink: 0,
-          }}>
-            💬
-          </div>
-
-          {/* Titolo */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{
-              fontSize: 10, fontWeight: 700,
-              letterSpacing: '0.1em',
-              color: 'var(--text-muted)',
-              textTransform: 'uppercase',
-              marginBottom: 2,
-            }}>
-              Event Chat
-            </p>
-            <h3 style={{
-              fontSize: 16, fontWeight: 800,
-              letterSpacing: '-0.025em',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              lineHeight: 1.2,
-            }}>
-              {eventTitle}
-            </h3>
-          </div>
-
-          {/* Chiudi */}
+          {/* Back arrow */}
           <button
             onClick={onClose}
             aria-label="Close chat"
             style={{
-              width: 36, height: 36,
-              borderRadius: 12,
-              background: 'var(--bg-elevated)',
-              border: '1px solid var(--border-subtle)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              cursor: 'pointer',
-              color: 'var(--text-secondary)',
-              flexShrink: 0,
-              transition: 'background 0.15s',
+              width:          40,
+              height:         40,
+              borderRadius:   14,
+              background:     'var(--bg-elevated)',
+              border:         '1px solid var(--border-subtle)',
+              display:        'flex',
+              alignItems:     'center',
+              justifyContent: 'center',
+              cursor:         'pointer',
+              flexShrink:     0,
+              transition:     'background 0.15s ease',
             }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <path d="M18 6L6 18M6 6L18 18"
-                stroke="currentColor" strokeWidth="2.2"
-                strokeLinecap="round" strokeLinejoin="round" />
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M19 12H5M12 5l-7 7 7 7"
+                stroke="var(--text-primary)"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </svg>
           </button>
+
+          {/* Event icon */}
+          <div style={{
+            width:          40,
+            height:         40,
+            borderRadius:   14,
+            background:     'linear-gradient(135deg, rgba(124,92,252,0.2), rgba(255,94,125,0.2))',
+            border:         '1px solid rgba(124,92,252,0.25)',
+            display:        'flex',
+            alignItems:     'center',
+            justifyContent: 'center',
+            fontSize:       20,
+            flexShrink:     0,
+          }}>
+            💬
+          </div>
+
+          {/* Title */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{
+              fontSize:      10,
+              fontWeight:    700,
+              letterSpacing: '0.09em',
+              color:         'var(--text-muted)',
+              textTransform: 'uppercase',
+              marginBottom:  2,
+            }}>
+              Event Chat
+            </p>
+            <h3 style={{
+              fontSize:      16,
+              fontWeight:    800,
+              letterSpacing: '-0.02em',
+              overflow:      'hidden',
+              textOverflow:  'ellipsis',
+              whiteSpace:    'nowrap',
+              color:         'var(--text-primary)',
+              lineHeight:    1.2,
+            }}>
+              {eventTitle}
+            </h3>
+          </div>
         </div>
 
-        {/* Messaggi */}
+        {/* ── Messages ──────────────────────────────────────── */}
         <div
-          ref={listRef}
+          ref={messagesRef}
           style={{
-            flex: 1,
-            overflowY: 'auto',
-            overscrollBehavior: 'contain',
-            padding: '12px 12px 4px',
-            display: 'flex',
+            flex:       1,
+            overflowY:  'auto',
+            overflowX:  'hidden',
+            padding:    '12px 12px 4px',
+            display:    'flex',
             flexDirection: 'column',
-            // Scrollbar invisible su mobile
-            scrollbarWidth: 'none',
+            // Momentum scrolling iOS
+            WebkitOverflowScrolling: 'touch',
+            overscrollBehavior:      'contain',
           }}
         >
-          <style>{`
-            div::-webkit-scrollbar { display: none; }
-            @keyframes msgIn {
-              from { opacity: 0; transform: translateY(6px); }
-              to   { opacity: 1; transform: translateY(0); }
-            }
-          `}</style>
-
-          {/* Errore */}
+          {/* Errore connessione */}
           {error && (
             <div style={{
-              textAlign: 'center',
-              color: '#FF5E7D',
-              fontSize: 13,
-              padding: '16px 0',
+              margin:         '12px auto',
+              padding:        '10px 18px',
+              borderRadius:   12,
+              background:     'rgba(255,94,125,0.1)',
+              border:         '1px solid rgba(255,94,125,0.2)',
+              color:          '#FF5E7D',
+              fontSize:       13,
+              textAlign:      'center',
             }}>
               {error}
             </div>
@@ -247,224 +241,82 @@ export function EventChatDrawer({ eventId, eventTitle, isOpen, onClose }: Props)
           {/* Empty state */}
           {!error && messages.length === 0 && (
             <div style={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
+              flex:           1,
+              display:        'flex',
+              flexDirection:  'column',
+              alignItems:     'center',
               justifyContent: 'center',
-              padding: '60px 32px',
-              gap: 10,
-              textAlign: 'center',
+              padding:        '60px 24px',
+              gap:            14,
+              textAlign:      'center',
             }}>
               <div style={{
-                fontSize: 48,
-                marginBottom: 4,
-                filter: 'drop-shadow(0 4px 12px rgba(0,0,0,0.3))',
-              }}>👋</div>
-              <p style={{ fontWeight: 800, fontSize: 17, letterSpacing: '-0.02em' }}>
+                width:          72,
+                height:         72,
+                borderRadius:   24,
+                background:     'rgba(124,92,252,0.1)',
+                border:         '1px solid rgba(124,92,252,0.15)',
+                display:        'flex',
+                alignItems:     'center',
+                justifyContent: 'center',
+                fontSize:       34,
+                marginBottom:   4,
+              }}>
+                👋
+              </div>
+              <p style={{ fontWeight: 900, fontSize: 20, letterSpacing: '-0.03em' }}>
                 No messages yet
               </p>
               <p style={{
-                color: 'var(--text-secondary)',
-                fontSize: 14,
-                lineHeight: 1.55,
-                maxWidth: 220,
+                color:      'var(--text-secondary)',
+                fontSize:   14,
+                lineHeight: 1.6,
+                maxWidth:   210,
               }}>
                 Say hi to the other attendees!
               </p>
             </div>
           )}
 
-          {/* Lista messaggi con separatori data e raggruppamento */}
-          {messages.map((msg, i) => {
-            const prev = messages[i - 1];
-            const showDate = !prev ||
-              new Date(msg.created_at).toDateString() !==
-              new Date(prev.created_at).toDateString();
-            const isOwn = msg.user.id === user?.id;
-            const props = getMsgProps(i);
-
-            return (
-              <div
-                key={msg.id}
-                style={{ animation: 'msgIn 0.2s ease forwards' }}
-              >
-                {showDate && (
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    margin: '16px 0 10px',
-                  }}>
-                    <div style={{
-                      flex: 1,
-                      height: 1,
-                      background: 'var(--border-subtle)',
-                    }} />
-                    <span style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: 'var(--text-muted)',
-                      letterSpacing: '0.06em',
-                      textTransform: 'uppercase',
-                      whiteSpace: 'nowrap',
-                    }}>
-                      {new Date(msg.created_at).toLocaleDateString('en-US', {
-                        weekday: 'short', month: 'short', day: 'numeric',
-                      })}
-                    </span>
-                    <div style={{
-                      flex: 1,
-                      height: 1,
-                      background: 'var(--border-subtle)',
-                    }} />
-                  </div>
-                )}
-
-                <ChatBubble
-                  msg={msg}
-                  isOwn={isOwn}
-                  showAvatar={props.showAvatar}
-                  isFirst={props.isFirst}
-                  isLast={props.isLast}
-                  isConsecutive={props.isConsecutive}
-                />
-              </div>
-            );
-          })}
+          {/* Message list */}
+          {enriched.map(({ msg, isFirst, isLast, showTime, showDate, isOwn, isNew }) => (
+            <div key={msg.id}>
+              {showDate && <ChatDateSeparator iso={msg.created_at} />}
+              <ChatBubble
+                msg={msg}
+                isOwn={isOwn}
+                isFirst={isFirst}
+                isLast={isLast}
+                showTime={showTime}
+                animate={isNew}
+              />
+            </div>
+          ))}
 
           <div ref={bottomRef} style={{ height: 8 }} />
         </div>
 
-        {/* Input area */}
-        <div style={{
-          borderTop: '1px solid var(--border-subtle)',
-          background: 'var(--bg-base)',
-          flexShrink: 0,
-          padding: '10px 12px 12px',
-        }}>
-          {/* Errore invio */}
-          {sendErr && (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '8px 12px',
-              background: 'rgba(255,94,125,0.1)',
-              borderRadius: 10,
-              marginBottom: 8,
-            }}>
-              <span style={{ fontSize: 13 }}>⚠️</span>
-              <p style={{ fontSize: 12.5, color: '#FF5E7D', fontWeight: 600 }}>
-                Message failed — tap Send to retry
-              </p>
-            </div>
-          )}
-
-          {/* Barra input */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'flex-end',
-            gap: 10,
-            background: 'var(--bg-elevated)',
-            border: '1.5px solid var(--border-subtle)',
-            borderRadius: 22,
-            padding: '8px 8px 8px 16px',
-          }}>
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={handleInputChange}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              placeholder="Message…"
-              rows={1}
-              maxLength={2000}
-              style={{
-                flex: 1,
-                background: 'transparent',
-                border: 'none',
-                outline: 'none',
-                resize: 'none',
-                fontSize: 15,
-                lineHeight: 1.5,
-                color: 'var(--text-primary)',
-                fontFamily: 'inherit',
-                maxHeight: 120,
-                minHeight: 24,
-                padding: '2px 0',
-                // Scrollbar nascosta nella textarea
-                scrollbarWidth: 'none',
-              }}
-            />
-
-            {/* Send button */}
-            <button
-              onClick={handleSend}
-              disabled={sending || !input.trim()}
-              aria-label="Send message"
-              style={{
-                width: 40, height: 40,
-                borderRadius: 14,
-                flexShrink: 0,
-                background: input.trim()
-                  ? 'linear-gradient(135deg, #7C5CFC, #FF5E7D)'
-                  : 'var(--bg-base)',
-                border: input.trim()
-                  ? 'none'
-                  : '1.5px solid var(--border-subtle)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: input.trim() && !sending ? 'pointer' : 'default',
-                transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                transform: input.trim() ? 'scale(1)' : 'scale(0.88)',
-                opacity: sending ? 0.6 : 1,
-                boxShadow: input.trim()
-                  ? '0 4px 14px rgba(124,92,252,0.45)'
-                  : 'none',
-              }}
-            >
-              {sending ? (
-                // Spinner mentre invia
-                <div style={{
-                  width: 16, height: 16,
-                  border: '2px solid rgba(255,255,255,0.3)',
-                  borderTopColor: '#fff',
-                  borderRadius: '50%',
-                  animation: 'spin 0.6s linear infinite',
-                }} />
-              ) : (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                  <path d="M22 2L11 13" stroke={input.trim() ? '#fff' : 'var(--text-muted)'}
-                    strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M22 2L15 22L11 13L2 9L22 2Z"
-                    fill={input.trim() ? '#fff' : 'none'}
-                    stroke={input.trim() ? '#fff' : 'var(--text-muted)'}
-                    strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-              )}
-            </button>
-          </div>
-
-          {/* Hint keyboard */}
-          <p style={{
-            fontSize: 10.5,
-            color: 'var(--text-muted)',
-            textAlign: 'center',
-            marginTop: 6,
-            opacity: 0.7,
-          }}>
-            Enter to send · Shift+Enter for new line
-          </p>
-        </div>
-
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        {/* ── Input ─────────────────────────────────────────── */}
+        <ChatInput onSend={sendMessage} sending={sending} />
       </div>
     </>
   );
+}
+
+/* ─── Helpers ────────────────────────────────────────────────── */
+
+function isSameDay(a: string, b: string): boolean {
+  const da = new Date(a);
+  const db = new Date(b);
+  return (
+    da.getFullYear() === db.getFullYear() &&
+    da.getMonth()    === db.getMonth()    &&
+    da.getDate()     === db.getDate()
+  );
+}
+
+// Raggruppa messaggi se arrivano entro 2 minuti l'uno dall'altro
+function isSameMinuteGroup(a: string, b: string): boolean {
+  const diff = Math.abs(new Date(b).getTime() - new Date(a).getTime());
+  return diff < 2 * 60 * 1000; // 2 minuti
 }

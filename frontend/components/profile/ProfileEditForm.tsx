@@ -37,10 +37,10 @@ export function ProfileEditForm({
       {/* Avatar */}
       <AvatarUpload currentUrl={avatarUrl} name={name} onChange={setAvatarUrl} />
 
-      {/* Nome */}
+      {/* Name */}
       <div>
         <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">
-          Nome visualizzato
+          Display Name
         </label>
         <input
           value={name}
@@ -60,16 +60,16 @@ export function ProfileEditForm({
           onChange={(e) => setBio(e.target.value)}
           maxLength={300}
           rows={3}
-          placeholder="Raccontati in breve..."
+          placeholder="Tell us about yourself..."
           className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-violet-400 focus:bg-white transition"
         />
         <p className="text-xs text-gray-400 text-right mt-1">{bio.length}/300</p>
       </div>
 
-      {/* Nazionalità */}
+      {/* Country */}
       <div>
         <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">
-          Nazionalità
+          Country
         </label>
         <div className="relative">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-lg pointer-events-none">
@@ -80,7 +80,7 @@ export function ProfileEditForm({
             onChange={(e) => setCountryCode(e.target.value)}
             className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-10 pr-4 py-3 text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-violet-400 focus:bg-white transition"
           >
-            <option value="">Seleziona paese...</option>
+            <option value="">Select country...</option>
             {COUNTRIES.map((c) => (
               <option key={c.code} value={c.code}>
                 {c.flag} {c.name}
@@ -92,7 +92,7 @@ export function ProfileEditForm({
 
       {/* Feedback */}
       {error && <p className="text-red-500 text-sm text-center">{error}</p>}
-      {success && <p className="text-green-600 text-sm text-center">✓ Profilo aggiornato</p>}
+      {success && <p className="text-green-600 text-sm text-center">✓ Profile updated</p>}
 
       {/* Submit */}
       <button
@@ -100,7 +100,7 @@ export function ProfileEditForm({
         disabled={loading || !name.trim()}
         className="w-full bg-gradient-to-r from-violet-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 disabled:opacity-50 text-white py-3 rounded-xl text-sm font-semibold shadow-sm transition"
       >
-        {loading ? 'Salvataggio...' : 'Salva profilo'}
+        {loading ? 'Saving...' : 'Save profile'}
       </button>
     </div>
   );
