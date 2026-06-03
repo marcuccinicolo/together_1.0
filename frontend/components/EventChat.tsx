@@ -27,9 +27,11 @@ export function EventChat({ eventId }: EventChatProps) {
     if (!inputText.trim() || sending) return;
     
     setSending(true);
-    const success = await sendMessage(inputText);
-    if (success) {
+    try {
+      await sendMessage(inputText);
       setInputText('');
+    } catch {
+      // Error already set in hook
     }
     setSending(false);
   };
