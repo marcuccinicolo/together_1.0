@@ -276,7 +276,6 @@ export default function EventDetailPage() {
               isOpen={chatOpen}
               eventId={event.id}
               eventTitle={event.title}
-              currentUserId={user?.id || 0}
               onClose={() => setChatOpen(false)}
             />
           </>
