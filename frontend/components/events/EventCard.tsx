@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useAuthStore } from '@/lib/store';
 import { Event } from '@/lib/types';
 import { getFacultyColor, getFacultyColorDim, getFacultyColorBorder, getFacultyShort } from '@/lib/faculties';
 import { getCategoryMeta, formatEventTime, getInitials } from '@/lib/utils';
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export default function EventCard({ event, style }: Props) {
+  const { user } = useAuthStore();
   const date   = new Date(event.event_datetime);
   const isPast = date < new Date();
 
@@ -26,7 +28,7 @@ export default function EventCard({ event, style }: Props) {
   const isFull    = fillPct >= 100;
   const spotsLeft = capacity ? capacity - approved : null;
 
-  const myRequest = event.my_join_request;
+  const myRequest = event.join_requests?.find(r => r.user?.id === user?.id);
   const statusBadge = myRequest
     ? myRequest.status === 'approved'
       ? { label: 'Joined ✓', color: '#00E5B3', bg: 'rgba(0,229,179,0.12)',  border: 'rgba(0,229,179,0.25)' }
